@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Singapore PSI Readings (Realtime)</title>
+  <style>
+    :root {
+      --bg: #0f172a;        /* slate-900 */
+      --panel: #111827;     /* gray-900 */
+      --muted: #94a3b8;     /* slate-400 */
+      --text: #e5e7eb;      /* gray-200 */
+      --accent: #22d3ee;    /* cyan-400 */
+      --ok: #10b981;        /* emerald-500 */
+      --warn: #f59e0b;      /* amber-500 */
+      --bad: #ef4444;       /* red-500 */
+      --border: #1f2937;    /* gray-800 */
+    }
+    html, body {
+      height: 100%;
+      background: radial-gradient(1200px 800px at 10% 10%, #0b1222 0%, var(--bg) 40%, #0b1222 100%);
+      color: var(--text);
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji", "Segoe UI Symbol";
+    }
+    .container {
+      max-width: 1100px; margin: 32px auto; padding: 0 16px;
+    }
+    header {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin-bottom: 18px;
+    }
+    h1 {
+      font-size: clamp(20px, 3vw, 28px); margin: 0; letter-spacing: 0.2px;
+    }
+    .sub {
+      color: var(--muted); font-size: 14px;
+    }
+    .card {
+      background: rgba(17,24,39,.6);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.02);
+      overflow: hidden;
+    }
+    .toolbar {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+      padding: 12px 14px; border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0));
+    }
+    .toolbar .pill {
+      background: rgba(34,211,238,.1); color: var(--accent);
+      padding: 6px 10px; border-radius: 999px; font-size: 12px;
+      border: 1px solid rgba(34,211,238,.25);
+    }
+    .toolbar .meta { color: var(--muted); font-size: 13px; }
+    .toolbar .spacer { flex: 1; }
+    button {
+      background: transparent; color: var(--text); border: 1px solid var(--border);
+      padding: 8px 12px; border-radius: 10px; cursor: pointer; font-weight: 600;
+    }
+    button:hover { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(34,211,238,.15) inset; }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px;
+      background: var(--muted);
+    }
+    .status.ok { color: var(--ok); }
+    .status.ok .status-dot { background: var(--ok); }
+    .status.err { color: var(--bad); }
+    .status.err .status-dot { background: var(--bad); }
+    .status.load { color: var(--warn); }
+    .status.load .status-dot { background: var(--warn); }
+
+    .table-wrap { width: 100%; overflow: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    thead th {
+      position: sticky; top: 0; background: #0b1222; z-index: 1;
+      border-bottom: 1px solid var(--border); text-align: left; padding: 10px 12px; white-space: nowrap;
+    }
+    tbody td { border-top: 1px dashed var(--border); padding: 10px 12px; white-space: nowrap; }
+    tbody tr:hover { background: rgba(255,255,255,.02); }
+    .key { color: #cbd5e1; font-weight: 600; }
+    .muted { color: var(--muted); }
+    .footer {
+      color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.6;
+    }
+    .visually-hidden{position:absolute;clip:rect(1px,1px,1px,1px);padding:0;border:0;height:1px;width:1px;overflow:hidden;white-space:nowrap;}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Singapore PSI Readings — Realtime</h1>
+      <span class="sub">Source: <code>https://api.data.gov.sg/v1/environment/psi</code></span>
+    </header>
+
+    <div class="card">
+      <div class="toolbar">
+        <span id="status" class="status load"><span class="status-dot"></span><strong>Loading</strong>… fetching latest data</span>
+        <span id="meta" class="meta"></span>
+        <div class="spacer"></div>
+        <button id="refreshBtn" type="button" title="Refetch the latest readings">Refresh</button>
+      </div>
+
+      <div class="table-wrap" id="tableWrap" aria-live="polite">
+        <!-- table will be injected here -->
+        <div id="placeholder" class="muted" style="padding:16px;">Preparing table…</div>
+      </div>
+    </div>
+
+    <p class="footer">
+      This page lists the 12 PSI-related readings (<span class="muted">o3_sub_index</span> … <span class="muted">psi_twenty_four_hourly</span>) for each region (including <em>national</em>), pulled in realtime from data.gov.sg.
+      No frameworks, just plain HTML/CSS/JS. Updated in Singapore time.
+    </p>
+  </div>
+
+  <script>
+    (function(){
+      "use strict";
+
+      const API = "https://api.data.gov.sg/v1/environment/psi";
+      const statusEl = document.getElementById("status");
+      const metaEl = document.getElementById("meta");
+      const tableWrap = document.getElementById("tableWrap");
+      const placeholder = document.getElementById("placeholder");
+      const refreshBtn = document.getElementById("refreshBtn");
+
+      function setStatus(kind, text){
+        statusEl.className = "status " + kind;
+        statusEl.innerHTML = '<span class="status-dot"></span>' + text;
+      }
+
+      function titleCaseKey(k){
+        // human-friendly label for keys e.g., "o3_sub_index" -> "O₃ Sub Index"
+        const gases = { o3: "O\u2083", co: "CO", so2: "SO\u2082", no2: "NO\u2082", pm10: "PM10", pm25: "PM2.5", psi: "PSI" };
+        const parts = k.split("_");
+        let out = parts.map(p=>{
+          if (gases[p]) return gases[p];
+          if (p === "one") return "1";
+          if (p === "eight") return "8";
+          if (p === "twenty") return "24"; // maps "twenty_four" => "24"
+          if (p === "four") return "";     // handled by previous line
+          if (p === "hourly") return "Hourly";
+          if (p === "index") return "Index";
+          return p.charAt(0).toUpperCase()+p.slice(1);
+        }).filter(Boolean).join(" ");
+        // Cosmetic fix-ups
+        out = out.replace("24  Hourly","24-Hourly")
+                 .replace("8  Hour Max", "8-Hour Max")
+                 .replace("1  Hour Max", "1-Hour Max");
+        return out;
+      }
+
+      function makeTable(readings){
+        // Determine regions/columns from the first reading entry
+        const readingKeys = Object.keys(readings).sort(); // 12 keys
+        if (readingKeys.length === 0) throw new Error("No readings found.");
+        const regions = Object.keys(readings[readingKeys[0]] || {}).sort();
+
+        // Build table
+        const table = document.createElement("table");
+
+        const thead = document.createElement("thead");
+        const hr = document.createElement("tr");
+        const th0 = document.createElement("th");
+        th0.textContent = "Reading";
+        hr.appendChild(th0);
+
+        regions.forEach(r=>{
+          const th = document.createElement("th");
+          th.textContent = r;
+          hr.appendChild(th);
+        });
+        thead.appendChild(hr);
+
+        const tbody = document.createElement("tbody");
+
+        readingKeys.forEach(key=>{
+          const tr = document.createElement("tr");
+          const tdKey = document.createElement("td");
+          tdKey.innerHTML = `<span class="key">${titleCaseKey(key)}</span><br><span class="muted">${key}</span>`;
+          tr.appendChild(tdKey);
+
+          regions.forEach(r=>{
+            const td = document.createElement("td");
+            let val = readings[key] && readings[key][r];
+            // Clean formatting
+            if (val === null || val === undefined || Number.isNaN(val)) {
+              td.textContent = "-";
+              td.className = "muted";
+            } else {
+              const n = Number(val);
+              td.textContent = Number.isFinite(n) ? (Math.round(n * 100) / 100).toString() : String(val);
+            }
+            tr.appendChild(td);
+          });
+
+          tbody.appendChild(tr);
+        });
+
+        table.appendChild(thead);
+        table.appendChild(tbody);
+        return table;
+      }
+
+      function formatSGT(isoString){
+        // Render time in Asia/Singapore (UTC+8) regardless of browser TZ
+        try {
+          const dt = new Date(isoString);
+          return new Intl.DateTimeFormat("en-SG", {
+            timeZone: "Asia/Singapore",
+            year: "numeric", month: "short", day: "2-digit",
+            hour: "2-digit", minute: "2-digit", second: "2-digit",
+            hour12: false
+          }).format(dt);
+        } catch { return isoString; }
+      }
+
+      async function fetchData(){
+        setStatus("load", "<strong>Loading</strong>… fetching latest data");
+        metaEl.textContent = "";
+        placeholder && (placeholder.textContent = "Fetching…");
+
+        try {
+          // Cache-buster to avoid any intermediate caching
+          const url = API + (API.includes("?") ? "&" : "?") + "_ts=" + Date.now();
+          const resp = await fetch(url, { cache: "no-store" });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+
+          // Expect shape: { items: [ { timestamp, readings: { ...12 keys... } } ], api_info: { status } }
+          const item = (data.items && data.items[0]) || null;
+          if (!item || !item.readings) throw new Error("Malformed API response: missing readings");
+
+          const table = makeTable(item.readings);
+          tableWrap.innerHTML = "";
+          tableWrap.appendChild(table);
+
+          const ts = item.timestamp || item.update_timestamp || "";
+          const apiStatus = data.api_info && data.api_info.status ? String(data.api_info.status) : "unknown";
+          setStatus(apiStatus === "healthy" ? "ok" : "load",
+                    `API status: <strong>${apiStatus}</strong>`);
+
+          metaEl.textContent = ts ? `Last update (SGT): ${formatSGT(ts)}` : "";
+
+        } catch (err){
+          console.error(err);
+          setStatus("err", `<strong>Error</strong> fetching data`);
+          tableWrap.innerHTML = "";
+          const pre = document.createElement("pre");
+          pre.style.whiteSpace = "pre-wrap";
+          pre.style.padding = "16px";
+          pre.textContent = "Failed to load PSI readings.\n" + (err && err.message ? err.message : String(err));
+          tableWrap.appendChild(pre);
+        }
+      }
+
+      refreshBtn.addEventListener("click", fetchData);
+      // initial load
+      fetchData();
+    })();
+  </script>
+</body>
+</html>
